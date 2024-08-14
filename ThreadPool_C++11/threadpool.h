@@ -13,10 +13,14 @@
 #include <thread>
 #include <future>
 
-const int TASK_MAX_THRESHHOLD = 2; // INT32_MAX;
+const int TASK_MAX_THRESHHOLD = INT32_MAX;  // INT32_MAX;
 const int THREAD_MAX_THRESHHOLD = 1024;
-const int THREAD_MAX_IDLE_TIME = 60; // 单位：秒
+const int THREAD_MAX_IDLE_TIME = 60;		// 单位：秒
 
+/**
+	@item threadpool
+	@brief C++新特性的线程池
+**/
 
 // 线程池支持的模式
 enum class PoolMode
@@ -29,7 +33,7 @@ enum class PoolMode
 class Thread
 {
 public:
-	// 线程函数对象类型
+	// 线程函数对象类型，线程执行的任务函数（包含该线程id）
 	using ThreadFunc = std::function<void(int)>;
 
 	// 线程构造
@@ -59,7 +63,7 @@ private:
 	int threadId_;  // 保存线程id
 };
 
-int Thread::generateId_ = 0;
+int Thread::generateId_ = 0;	// 静态成员变量，全类共享，不占用对象内存，且只在程序的全局数据区分配一次内存空间
 
 // 线程池类型
 class ThreadPool
@@ -117,18 +121,19 @@ public:
 
 	// 给线程池提交任务
 	// 使用可变参模板编程，让submitTask可以接收任意任务函数和任意数量的参数
-	// pool.submitTask(sum1, 10, 20);   csdn  大秦坑王  右值引用+引用折叠原理
-	// 返回值future<>
-	template<typename Func, typename... Args>		// -> 指定返回值类型
-	auto submitTask(Func&& func, Args&&... args) //-> std::future<decltype(func(args...))>	// 推导函数调用之后的返回值（函数，参数）
+	// pool.submitTask(sum1, 10, 20); 
+	// 返回值future<>  Func 函数对象指针  Args 参数列表
+	template<typename Func, typename... Args>		// -> 指定返回值类型，给auto提示
+	auto submitTask(Func&& func, Args&&... args) -> std::future<decltype(func(args...))>	// 推导函数调用之后的返回值（函数，参数）
 	{
-		// 打包任务，放入任务队列里面 RType是类型
+		// 打包任务，放入任务队列里面 RType是类型   函数，参数， 返回类型 = RType
 		using RType = decltype(func(args...));
 		//task	指针，指向packaged_task<RType()包		 // void()
+		// auto = std::shared_ptr<std::packaged_task<RType()>>    packaged_task 需要函数返回值，参数列表，bind 绑定只需包含返回类型就好了
 		auto task = std::make_shared<std::packaged_task<RType()>>(
-			std::bind(std::forward<Func>(func), std::forward<Args>(args)...));
-		std::future<RType> result = task->get_future();
+		std::bind(std::forward<Func>(func), std::forward<Args>(args)...));		// 把任意参数的绑定到无参函数对象
 
+		std::future<RType> result = task->get_future();	// 提前绑定结果，  该任务在任务队列 用std::function<void()> 执行
 		// 获取锁
 		std::unique_lock<std::mutex> lock(taskQueMtx_);
 		// 用户提交任务，最长不能阻塞超过1s，否则判断提交任务失败，返回
@@ -139,14 +144,16 @@ public:
 			std::cerr << "task queue is full, submit task fail." << std::endl;
 			auto task = std::make_shared<std::packaged_task<RType()>>(
 				[]()->RType { return RType(); });
-			(*task)();
+			// packaged_task是类，使用要解引用
+			(*task)(); 
 			return task->get_future();
 		}
 
 		// 如果有空余，把任务放入任务队列中
-		// taskQue_.emplace(sp);  
 		// using Task = std::function<void()>;	//function执行pack包的任务
 		// task的智能指针计数+1
+		// 前面的 task 可能是 int() test(), 或者 double()  test() 任务。
+		// function 对task进行封装， 全部封装成void()
 		taskQue_.emplace([task]() {(*task)();}); //task是智能指针 延长生命周期  函数对象延长了生命周期 //不能按引用，引用出作用域就没了
 		taskSize_++;
 
@@ -213,9 +220,9 @@ private:
 		auto lastTime = std::chrono::high_resolution_clock().now();
 
 		// 所有任务必须执行完成，线程池才可以回收所有线程资源
-		for (;;)
+		while(true)
 		{
-			Task task;
+			Task task;  // std::function<void()> 函数对象
 			{
 				// 先获取锁
 				std::unique_lock<std::mutex> lock(taskQueMtx_);
@@ -278,7 +285,7 @@ private:
 				std::cout << "tid:" << std::this_thread::get_id()
 					<< "获取任务成功..." << std::endl;
 
-				// 从任务队列种取一个任务出来
+				// 从任务队列中取一个任务出来
 				task = taskQue_.front();
 				taskQue_.pop();
 				taskSize_--;
@@ -293,7 +300,7 @@ private:
 				notFull_.notify_all();
 			} // 就应该把锁释放掉
 
-			// 当前线程负责执行这个任务
+			// 当前线程负责执行这个任务 task函数对象，  函数指针， 指向nullptr
 			if (task != nullptr)
 			{
 				task(); // 执行function<void()> 

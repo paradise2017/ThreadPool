@@ -43,6 +43,7 @@ void worker_thread(int clientfd)
 {
 
 }
+
 int main()
 {
     ThreadPool pool;
@@ -56,7 +57,7 @@ int main()
         for (int i = b; i <= e; i++)
             sum += i;
         return sum;
-        }, 1, 100);
+        }, 1, 100);     // [] 作用域问题。
     future<int> r4 = pool.submitTask([](int b, int e)->int {
         int sum = 0;
         for (int i = b; i <= e; i++)
@@ -76,6 +77,9 @@ int main()
     cout << r3.get() << endl;
     cout << r4.get() << endl;
     cout << r5.get() << endl;
+
+
+    
 
     //packaged_task<int(int, int)> task(sum1);
     //// future <=> Result
